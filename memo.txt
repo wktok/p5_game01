@@ -1,0 +1,5 @@
+2-2. server/package.json について
+→デフォルトで作成されたデータの構成が異なる。なにがちがうのか？
+
+2-4. server.js
+5行目 import {fileURLToPath} とは？
