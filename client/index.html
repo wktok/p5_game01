@@ -3,10 +3,39 @@
   <head>
     <meta charset="utf-8" />
     <title>p5 game</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- CSS -->
+    <link rel="stylesheet" href="./styles.css" />
+    <!-- p5.js -->
     <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
+    <!-- js -->
     <script type="module" src="./sketch.js"></script>
   </head>
-  <body style="margin:0;background:#111;color:#fff;">
-    <div style="position:fixed;left:12px;top:10px;">Press [Space] to +1, [S] to Save</div>
+  <body>
+    <div class="app">
+      <!-- HEADER -->
+      <header class="hud">
+        <div class="brand">p5 game</div>
+        <form id="nameForm" class="name-form">
+          <input id="displayNameInput" type="text" placeholder="enter name" maxlength="20" />
+          <button type="submit">Save Name</button>
+          <button id="logoutBtn" type="button" class="secondary">Logout</button>
+        </form>
+        <div class="who">
+          <span id="whoami"></span>
+          <span id="status" class="status"></span>
+        </div>
+      </header>
+
+      <!-- MAIN -->
+      <main class="main">
+        <div class="canvas-wrap" id="canvas-wrap" aria-label="game area"></div>
+        <aside class="side">
+          <h2>Top 10</h2>
+          <ul id="topList" class="toplist"></ul>
+          <p class="hint">[Space]: +1 / [S]: Save score</p>
+        </aside>
+      </main>
+    </div>
   </body>
 </html>

@@ -1,12 +1,13 @@
 {
   "name": "server",
   "version": "1.0.0",
-  "type": "module", 
+  "type": "module",
   "scripts": {
     "dev": "nodemon server.js",
     "start": "node server.js"
   },
   "dependencies": {
+    "better-sqlite3": "^12.2.0",
     "dotenv": "^17.2.2",
     "express": "^5.1.0"
   },
