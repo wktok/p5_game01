@@ -32,7 +32,7 @@ function wireUI() {
     e.preventDefault();
     const newName = nameInput.value.trim();
     if (!newName) { status.textContent = "Name cannot be empty."; return;}
-    if (newName.lenght > 20) {
+    if (newName.length > 20) {
       status.textContent = "Name too long. Maximum lenght is 20 characters.";
       return;
     }
@@ -84,7 +84,7 @@ function renderTopList() {
   ul.innerHTML = "";
   top10.forEach((row, i) => {
     const li = document.createElement("li");
-    const when = new Date(row.create_at).toLocaleTimeString();
+    const when = new Date(row.created_at).toLocaleTimeString();
     li.textContent = `${i + 1}.${row.display_name} - ${row.score} (${when})`;
     ul.appendChild(li);
   });
@@ -113,8 +113,14 @@ function connectRealtime() {
   });
 
   // 入力の送信を　20Hz にスロットル
+  // setInterval(() => {
+  //   if (socket && socket.connected) socket.emit("input", keys);
+  // }, 50);
+  let lastKeys = {...keys};
   setInterval(() => {
-    if (socket && socket.connected) socket.emit("input", keys);
+    const changed = ["w","a","s","d"].some(k => keys[k] !== lastKeys[k]);
+    if (changed && socket?.connected) socket.emit("input", keys);
+    lastKeys = {...keys};
   }, 50);
 }
 
@@ -129,6 +135,22 @@ window.setup = async function () {
   wireUI();
   await refreshTop();
   connectRealtime();
+
+  // グローバルでキーを拾う（入力欄フォーカス時は無視）
+  window.addEventListener("keydown", (e) => {
+    if (isTypingTarget(e.target)) return;
+    applyKeyFromEvent(e, true);
+  }, { capture: true });
+
+  window.addEventListener("keyup", (e) => {
+    if (isTypingTarget(e.target)) return;
+    applyKeyFromEvent(e, false);
+  }, { capture: true });
+
+  // キャンバスをクリックしたらフォーカスを奪って入力に干渉しにくくする
+  document.getElementById("canvas-wrap")?.addEventListener("mousedown", () => {
+    document.activeElement instanceof HTMLElement && document.activeElement.blur();
+  });
 };
 
 window.draw = function () {
@@ -155,38 +177,49 @@ window.draw = function () {
   fill(255);
   textSize(16);
   text(`score: ${score}`, 12, 24);
+
+  // DEBUG
+  push();
+  textSize(12); fill(180);
+  text(`keys: ${JSON.stringify(keys)} `, 12, height - 28);
+  const me = snapshots.find(p => p.sid === (socket?.id));
+  if (me) text(`me: x=${me.x.toFixed(1)}, y=${me.y.toFixed(1)}`, 12, height - 12);
+  pop();
 };
 
-// 置き換え：イベントではなくキー文字を直接扱う
-function setKeyChar(k, down) {
+
+// 入力欄にフォーカスがあるときはゲーム入力を無視
+function isTypingTarget(el) {
+  if (!el) return false;
+  const tag = el.tagName?.toLowerCase();
+  return tag === "input" || tag === "textarea" || el.isContentEditable;
+}
+
+// e.key を wasd に正規化して keys を更新
+function applyKeyFromEvent(e, down) {
+  let k = e.key;
   if (typeof k != "string") return;
-  const lower = k.toLowerCase();
-  if (["w","a","s","d"].includes(lower)) {
-    keys[lower] = down;
+
+  // 矢印キー -> WASD にマッピング
+  const map = { ArrowUp: "w", ArrowLeft: "a", ArrowDown: "s", ArrowRight: "d" };
+  k = (map[k] || k).toLowerCase();
+
+  if (["w", "a", "s", "d"].includes(k)) {
+    keys[k] = down;
+    e.preventDefault(); // スクロール等を禁止
+  }
+
+  // SPACE でスコア+1
+  if (down && e.code === "Space") {
+    score++;
+    e.preventDefault();
+  }
+  if (down && (k === "s") && !["input", "textarea"].includes(e.target.tagName?.toLowerCase())) {
+    postScore(player.id, score).then(refreshTop).catch(()=>{});
+    e.preventDefault();
   }
 }
 
-
-
-// キー操作（Spaceで+1、Sで保存）
-window.keyPressed = async function () {
-  setKeyChar(key, true);
-
-  // 既存のSキーでスコア保存
-  if (key?.toUpperCase() === "S") {
-    try { await postScore(player.id, score); await refreshTop(); } catch {}
-    return false; // ブラウザ既定動作を抑止
-  }
-
-  // スペースでスコア+1
-  if (key === " ") {
-    score++;
-    return false; // スクロールなど既定動作を抑止
-  }
-  if (["w","a","s","d"].includes(key?.toLowerCase())) return false;
-};
-
-window.keyReleased = function() {
-  setKeyChar(key, false);
-  if (["w","a","s","d"].includes(key?.toLowerCase)) return false;
-};
+// もう使わない（重複発火防止のため）
+window.keyPressed = undefined;
+window.keyReleased = undefined;

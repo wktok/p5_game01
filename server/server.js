@@ -92,7 +92,7 @@ setInterval(() => {
         const ny = (vy/len) * SPEED;
         
         p.x = clamp(p.x + nx*dt, 10, ARENA.width - 10);
-        p.x = clamp(p.y + ny*dt, 10, ARENA.height - 10);
+        p.y = clamp(p.y + ny*dt, 10, ARENA.height - 10);
 
         if (!rooms.has(p.room)) rooms.set(p.room, []);
         rooms.get(p.room).push({ sid, name: p.name, x: p.x, y: p.y });
@@ -184,9 +184,4 @@ app.get("/api/health", (req, res) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Server: http://localhost:${PORT}`);
-});
-
-
-io.on('connection', (socket) => {
-  console.log('connected');
 });
