@@ -10,12 +10,14 @@
     <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
     <!-- js -->
     <script type="module" src="./sketch.js"></script>
+    <!-- socket -->
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
   </head>
   <body>
     <div class="app">
       <!-- HEADER -->
       <header class="hud">
-        <div class="brand">p5 game</div>
+        <div class="brand"></div>
         <form id="nameForm" class="name-form">
           <input id="displayNameInput" type="text" placeholder="enter name" maxlength="20" />
           <button type="submit">Save Name</button>

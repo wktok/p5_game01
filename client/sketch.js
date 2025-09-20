@@ -11,6 +11,11 @@ let top10 = [];       // ランキング
 
 const $ = (sel) => document.querySelector(sel);
 
+let socket;
+let keys = { w:false, a:false, s:false, d:false };
+let arena = { width: 640, height: 360 };
+let snapshots = [] // [{sid, name, x, y}, ...]　※自分含む
+
 // --------- UI配線 & DOMレンダリング ----------
 function wireUI() {
   const nameInput = $("#displayNameInput");
@@ -35,6 +40,8 @@ function wireUI() {
     // サーバー更新　→　localStorage反映
     try {
       await updateDisplayName(player.id, newName);
+      player.name = newName;
+      localStorage.setItem("display_name", player.name);
       whoami.textContent = `You are: ${player.name} (${player.id.slice(0, 5)}…)`;
       status.textContent = "Saved";
       setTimeout(() => (status.textContent = ""), 1200);
@@ -64,8 +71,7 @@ async function ensurePlayer(){
     return;
   }
   // 未登録　→　初期名で登録（UIから変更可能）
-  const initialName = savedName || "player";
-  const data = await registerPlayer(initialName);
+  const data = await registerPlayer("player");
   player.id = data.player_id;
   player.name = data.display_name;
   localStorage.setItem("player_id", player.id);
@@ -93,6 +99,25 @@ async function refreshTop() {
   }
 }
 
+// --------- リアルタイム部分 ----------
+function connectRealtime() {
+  socket = io("/", { transports: ["websocket"] }); // 同一オリジン
+  socket.on("connect", () => {
+    const room = (location.hash && location.hash.slice(1)) || "lobby";
+    socket.emit("join", { player_id: player.id, display_name: player.name, room });
+  });
+
+  socket.on("state", (payload) => {
+    arena = payload.arena;
+    snapshots = payload.players; // [{sid,name,x,y}]
+  });
+
+  // 入力の送信を　20Hz にスロットル
+  setInterval(() => {
+    if (socket && socket.connected) socket.emit("input", keys);
+  }, 50);
+}
+
 // --------- p5.js ----------
 let p5canvas;
 window.setup = async function () {
@@ -103,35 +128,65 @@ window.setup = async function () {
   await ensurePlayer();
   wireUI();
   await refreshTop();
+  connectRealtime();
 };
 
 window.draw = function () {
   background(32);
 
+  // プレイヤー描画
+  // 自分も含め、snapshots の全員を描画（socket.id 区別はサーバー側 sid で）
+  for (const p of snapshots) {
+    const isMe = false; // sid と socket.id を比較したい場合は別途送る
+    push();
+    rectMode(CENTER);
+    stroke(255);
+    fill( isMe ? 200 : 120, 200, 255, 180 );
+    rect(p.x, p.y, 20, 20, 3);
+    noStroke();
+    fill(240);
+    textSize(12);
+    textAlign(CENTER, TOP);
+    text(p.name, p.x, p.y + 14);
+    pop();
+  }
+
   // 自分のスコア
   fill(255);
-  textSize(20);
-  text(`score: ${score}`, 18, 36);
-
-  // 右下に自分の名前を表示
-  push();
-  textAlign(RIGHT, BOTTOM);
-  fill(200, 200, 200, 180);
-  textSize(12);
-  text(`${player.name}`, width - 8, height - 8);
-  pop();
+  textSize(16);
+  text(`score: ${score}`, 12, 24);
 };
+
+// 置き換え：イベントではなくキー文字を直接扱う
+function setKeyChar(k, down) {
+  if (typeof k != "string") return;
+  const lower = k.toLowerCase();
+  if (["w","a","s","d"].includes(lower)) {
+    keys[lower] = down;
+  }
+}
+
+
 
 // キー操作（Spaceで+1、Sで保存）
 window.keyPressed = async function () {
-  if (key === " ") score++;
+  setKeyChar(key, true);
 
-  if (key.toUpperCase() === "S") {
-    try{
-      await postScore(player.id, score);
-      await refreshTop();
-    } catch (e) {
-      console.error(e);
-    }
+  // 既存のSキーでスコア保存
+  if (key?.toUpperCase() === "S") {
+    try { await postScore(player.id, score); await refreshTop(); } catch {}
+    return false; // ブラウザ既定動作を抑止
   }
+
+  // スペースでスコア+1
+  if (key === " ") {
+    score++;
+    return false; // スクロールなど既定動作を抑止
+  }
+  if (["w","a","s","d"].includes(key?.toLowerCase())) return false;
+};
+
+window.keyReleased = function() {
+  setKeyChar(key, false);
+  if (["w","a","s","d"].includes(key?.toLowerCase)) return false;
 };

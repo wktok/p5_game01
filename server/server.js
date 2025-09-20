@@ -4,15 +4,105 @@ import dotenv from "dotenv";
 import { fileURLToPath } from "url";
 import { db } from "./db.js";
 import crypto from "crypto";
+import http from "http";
+import { Server as SocketIOServer } from "socket.io";
 
+// Express準備
 dotenv.config(); // .envを取り込む
-
 // ES Modulesでは __dirname がない　→　次の2行で代替
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(express.json()); // JSONボディの受け取りを有効化
+
+
+// p5クライアントを”同じサーバー”から配信
+// CORSや複数ポートの問題を回避
+// http://localhost:3000/ にアクセスすると client/ の内容が返る
+const CLIENT_DIR = path.resolve(__dirname, "../client");
+app.use(express.static(CLIENT_DIR));
+app.get("/", (req, res) => res.sendFile(path.join(CLIENT_DIR, "index.html")));
+
+// HTTPサーバーをラップ
+const server = http.createServer(app);
+const io = new SocketIOServer(server, { cors: { origin: "*"} });
+
+
+// ====== リアルタイム用（超最小サンプル） ======
+const ROOM_DEFAULT = "lobby";
+const ARENA = { width: 640, height: 360 };
+const SPEED = 120; // px/sec
+const players = new Map(); // socket.id -> {id, name, x, y, room, keys:{w,a,s,d}}
+
+function clamp(v, min, max) {
+    return Math.max(min, Math.min(max, v)); 
+}
+
+io.on("connection", (socket) => {
+    console.log("connected", socket.id);
+
+    // クライアントから自己紹介(join)
+    socket.on("join", ({ player_id, display_name, room }) => {
+        const r = room || ROOM_DEFAULT;
+        socket.join(r);
+
+        // 既存プレイヤーと被らないようランダムにspawn
+        const x = 40 + Math.random() * (ARENA.width - 80);
+        const y = 40 + Math.random() * (ARENA.height - 80);
+
+        players.set(socket.id, {
+            id: player_id,
+            name: display_name || "player",
+            x, y,
+            room: r,
+            keys: { w:false, a:false, s:false, d:false },
+        });
+
+        // 新規参加に現在状態を返すのは"state"で行う
+        console.log(`join ${r}: ${display_name} (${socket.id})`);
+    });
+
+    // 入力(押下状態）を受信
+    socket.on("input", (keys) => {
+        const p = players.get(socket.id);
+        if (p) p.keys = { ...p.keys, ...keys };
+    });
+
+    socket.on("disconnect", () => {
+        players.delete(socket.id);
+        console.log("disconnected", socket.id);
+    });
+});
+
+// サーバー権威ループ：30fpsで位置更新して部屋ごとに配信
+let last = Date.now();
+setInterval(() => {
+    const now = Date.now();
+    const dt = (now - last) / 1000; // seconds
+    last = now;
+
+    const rooms = new Map(); // room -> array of snapshot
+    for (const [sid, p] of players) {
+        // 速度計算
+        const vx = (p.keys.d ? 1 : 0) - (p.keys.a ? 1 : 0);
+        const vy = (p.keys.s ? 1 : 0) - (p.keys.w ? 1 : 0);
+        const len = Math.hypot(vx, vy) || 1;
+        const nx = (vx/len) * SPEED;
+        const ny = (vy/len) * SPEED;
+        
+        p.x = clamp(p.x + nx*dt, 10, ARENA.width - 10);
+        p.x = clamp(p.y + ny*dt, 10, ARENA.height - 10);
+
+        if (!rooms.has(p.room)) rooms.set(p.room, []);
+        rooms.get(p.room).push({ sid, name: p.name, x: p.x, y: p.y });
+    }
+
+    for (const [room, arr] of rooms) {
+        io.to(room).emit("state", { arena: ARENA, players: arr });
+    }
+}, 1000/30);
+
 
 // ユーザー登録
 // POST /api/register {display_name}
@@ -90,18 +180,13 @@ app.get("/api/health", (req, res) => {
     }
 });
 
-// p5クライアントを”同じサーバー”から配信
-// CORSや複数ポートの問題を回避
-// http://localhost:3000/ にアクセスすると client/ の内容が返る
-const CLIENT_DIR = path.resolve(__dirname, "../client");
-app.use(express.static(CLIENT_DIR));
-app.get("/", (req, res) => res.sendFile(path.join(CLIENT_DIR, "index.html")));
 
-// 起動
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+server.listen(PORT, () => {
     console.log(`Server: http://localhost:${PORT}`);
-    console.log(`Client: http://localhost:${PORT}/`);
-    console.log(`Health: http://localhost:${PORT}/api/health`);
 });
 
+
+io.on('connection', (socket) => {
+  console.log('connected');
+});
