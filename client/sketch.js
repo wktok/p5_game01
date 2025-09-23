@@ -5,12 +5,20 @@ import {
   fetchTopScores,
  } from "./api.js";
 
+// Client constants (mirror server values for drawing)
+const PLAYER_SIZE = 20;
+const PICKUP_RADIUS = 8;
+const BULLET_RADIUS_BASE = 4;
+let pickups = []; // [{id, x, y}]
+let bullets = []; // [{id, x, y, power, color}]
+
 let player = { id: null, name: "player" };
 let score = 0;        // 自分のスコア
 let top10 = [];       // ランキング
 
 const $ = (sel) => document.querySelector(sel);
 
+let selfSid = null;
 let socket;
 let keys = { w:false, a:false, s:false, d:false };
 let arena = { width: 640, height: 360 };
@@ -55,7 +63,7 @@ function wireUI() {
     localStorage.removeItem("player_id");
     localStorage.removeItem("display_name");
     status.textContent = "Cleared local account. Reloading...";
-    setTimeout(() => location.reload(), 300);
+    setTimeout(() => location.reload(), 150);
   });
 }
 
@@ -102,14 +110,21 @@ async function refreshTop() {
 // --------- リアルタイム部分 ----------
 function connectRealtime() {
   socket = io("/", { transports: ["websocket"] }); // 同一オリジン
+
+  socket.on("you", ({ sid }) => {
+    selfSid = sid;
+  });
+
   socket.on("connect", () => {
     const room = (location.hash && location.hash.slice(1)) || "lobby";
     socket.emit("join", { player_id: player.id, display_name: player.name, room });
   });
 
   socket.on("state", (payload) => {
-    arena = payload.arena;
-    snapshots = payload.players; // [{sid,name,x,y}]
+    arena = payload?.arena || arena;
+    snapshots = payload?.players || []; // [{sid,name,x,y,energy,color}]
+    pickups = payload?.pickups || [];
+    bullets = payload?.bullets || [];
   });
 
   // 入力の送信を　20Hz にスロットル
@@ -155,21 +170,41 @@ window.setup = async function () {
 
 window.draw = function () {
   background(32);
+  
+  // エネルギー玉
+  noStroke();
+  for (const pu of pickups) {
+    fill (120, 220, 255);
+    ellipse(pu.x, pu.y, PICKUP_RADIUS*2, PICKUP_RADIUS*2);
+  }
+
+  // 弾
+  for (const b of bullets) {
+  fill (b.color.r, b.color.g, b.color.b);
+  const r = b.power*1.5;
+  ellipse(b.x, b.y, r*2, r*2);
+  }
+  
 
   // プレイヤー描画
   // 自分も含め、snapshots の全員を描画（socket.id 区別はサーバー側 sid で）
   for (const p of snapshots) {
-    const isMe = false; // sid と socket.id を比較したい場合は別途送る
     push();
     rectMode(CENTER);
     stroke(255);
-    fill( isMe ? 200 : 120, 200, 255, 180 );
-    rect(p.x, p.y, 20, 20, 3);
+    strokeWeight(1);
+    fill( p.color.r, p.color.g, p.color.b, 220);
+    rect(p.x, p.y, PLAYER_SIZE, PLAYER_SIZE, 3);
+
     noStroke();
     fill(240);
     textSize(12);
+    textAlign(CENTER, BOTTOM);
+    text(p.name, p.x, p.y - 14);
+    
+    fill(180, 255, 180);
     textAlign(CENTER, TOP);
-    text(p.name, p.x, p.y + 14);
+    text(`E:${p.energy}`, p.x, p.y + 14);
     pop();
   }
 
@@ -185,6 +220,13 @@ window.draw = function () {
   const me = snapshots.find(p => p.sid === (socket?.id));
   if (me) text(`me: x=${me.x.toFixed(1)}, y=${me.y.toFixed(1)}`, 12, height - 12);
   pop();
+
+  // 照準
+  noCursor();
+  stroke(255);
+  strokeWeight(2);
+  line(mouseX, mouseY + 5, mouseX, mouseY - 5);
+  line(mouseX + 5, mouseY, mouseX - 5, mouseY);
 };
 
 
@@ -219,6 +261,21 @@ function applyKeyFromEvent(e, down) {
     e.preventDefault();
   }
 }
+
+function fireTowardMouse() {
+  // 自分の最新のスナップショットを探す
+  const me = selfSid && snapshots.find(p => p.sid === selfSid);
+  if (!me) return; // 未取得の場合はスルー
+
+  const ax = mouseX - me.x;
+  const ay = mouseY - me.y; 
+  if (socket?.connected) socket.emit("fire", {ax, ay}); 
+}
+
+window.mousePressed = (e) => {
+  const wrap = document.getElementById("canvas-wrap");
+  if (wrap && wrap.contains(e.target)) fireTowardMouse();
+};
 
 // もう使わない（重複発火防止のため）
 window.keyPressed = undefined;
