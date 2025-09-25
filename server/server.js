@@ -35,6 +35,9 @@ const ARENA = { width: 640, height: 360 };
 
 const SPEED = 120;                      // px/sec
 const PLAYER_SIZE = 20;
+const PLAYER_MAX_HP = 100;
+const INVULN_MS = 0;
+const RESPAWN_MS = 2000;
 const PICKUP_RADIUS = 8;                // Energy Ball radius
 const MAX_PICKUPS = 20;
 const PICKUP_SPAWN_INTERVAL = 500;     // spawn interval(ms)
@@ -53,6 +56,9 @@ let nextId = 1;
 
 function rand(min, max) { return Math.random()*(max-min)+min; }
 function clamp(v, min, max) { return Math.max(min, Math.min(max, v)); }
+
+function bulletRadius(power) { return power*1.5 };
+function bulletDamage(power) { return power*1.5 };
 
 function colorFromId(str){
   // 簡易ハッシュ→HSL→RGB
@@ -99,6 +105,9 @@ io.on("connection", (socket) => {
             keys: { w:false, a:false, s:false, d:false },
             energy: 0,
             color: colorFromId(player_id),
+            hp: PLAYER_MAX_HP,
+            deadUntil: 0,
+            lastHitAt: 0,
         });
 
         // 新規参加に現在状態を返すのは"state"で行う
@@ -156,19 +165,33 @@ setInterval(() => {
     //　--- プレイヤー移動 ---
     const rooms = new Map(); 
     for (const [sid, p] of players) {
-        // 速度計算
-        const vx = (p.keys.d ? 1 : 0) - (p.keys.a ? 1 : 0);
-        const vy = (p.keys.s ? 1 : 0) - (p.keys.w ? 1 : 0);
-        const len = Math.hypot(vx, vy) || 1;
-
-        p.x = clamp(p.x + (vx/len)*SPEED*dt, PLAYER_SIZE/2, ARENA.width - PLAYER_SIZE/2);
-        p.y = clamp(p.y + (vy/len)*SPEED*dt, PLAYER_SIZE/2, ARENA.height - PLAYER_SIZE/2);
+        const nowMs = Date.now();
+        const isDead = nowMs < p.deadUntil;
+        if (!rooms.has(p.room)) { rooms.set(p.room, []) };
+        
+        if (!isDead) {
+            // 速度計算
+            const vx = (p.keys.d ? 1 : 0) - (p.keys.a ? 1 : 0);
+            const vy = (p.keys.s ? 1 : 0) - (p.keys.w ? 1 : 0);
+            const len = Math.hypot(vx, vy) || 1;
+    
+            p.x = clamp(p.x + (vx/len)*SPEED*dt, PLAYER_SIZE/2, ARENA.width - PLAYER_SIZE/2);
+            p.y = clamp(p.y + (vy/len)*SPEED*dt, PLAYER_SIZE/2, ARENA.height - PLAYER_SIZE/2);
+        } else {
+            // ダウン中は動かない
+        }
 
         if (!rooms.has(p.room)) rooms.set(p.room, []);
-        rooms.get(p.room).push({ sid, name: p.name, x: p.x, y: p.y, energy: p.energy, color: p.color });
+        rooms.get(p.room).push({ 
+            sid, name: p.name, x: p.x, y: p.y, 
+            energy: p.energy, 
+            color: p.color, 
+            hp: p.hp, 
+            deadUntil: p.deadUntil
+        });
     }
 
-    // --- 拾得判定(O(n*m)だがMVPなのでOK) ---
+    // --- 拾得判定(計算量O(m*n)はあとで改善) ---
     const remain = [];
     for (const pu of pickups) {
         let taken = false;
@@ -185,11 +208,51 @@ setInterval(() => {
     for (const b of bullets) {
         b.x += b.vx * dt;
         b.y += b.vy * dt;
+
+        // 被弾判定:弾vsプレイヤーの簡易判定
+        let hit = false;
+        for (const [sid, p] of players) {
+            if (sid === b.ownerSid) continue;  // 自分の弾は被弾しない
+            const nowMs = Date.now();
+            if (nowMs < p.deadUntil) continue; // ダウン中は被弾しない
+            if (nowMs - p.lastHitAt < INVULN_MS) continue; // 無敵中は被弾しない
+
+            const pr = PLAYER_SIZE / 2;
+            const br = bulletRadius(b.power);
+            const dx = b.x - p.x, dy = b.y - p.y;
+            if (dx*dx + dy*dy <= (pr + br)*(pr + br)) {
+                // 被弾
+                const dmg = bulletDamage(b.power);
+                p.hp = Math.max(0, p.hp - dmg);
+                p.lastHitAt = nowMs;
+
+                if (p.hp <= 0) {
+                    // ダウン →　リスポーン予約
+                    p.deadUntil = nowMs + RESPAWN_MS;
+                    p.energy = 0;
+                }
+
+                hit = true;
+                break;
+            }
+        }
         const out = b.x < -20 || b.x > ARENA.width + 20 || b.y < -20 || b.y > ARENA.height + 20;
         const expired = now - b.spawnAt > BULLET_LIFETIME;
-        if (!out && !expired) alive.push(b);
+        if (!hit && !out && !expired) alive.push(b);
     }
     bullets = alive;
+
+    for (const[,p] of players) {
+        const nowMs = Date.now();
+        if (p.deadUntil !== 0 && nowMs >= p.deadUntil && p.hp <= 0 ) {
+            // リスポーン
+            p.hp = PLAYER_MAX_HP;
+            p.energy = 0;
+            p.deadUntil = 0;
+            p.x = rand(40, ARENA.width - 40);
+            p.y = rand(40, ARENA.height - 40);
+        }
+    }
 
     // --- 状態配信（部屋ごと） 
     for (const [room, arr] of rooms) {

@@ -189,22 +189,45 @@ window.draw = function () {
   // プレイヤー描画
   // 自分も含め、snapshots の全員を描画（socket.id 区別はサーバー側 sid で）
   for (const p of snapshots) {
+    const now = Date.now();
+    const isDead = p.deadUntil && now < p.deadUntil;
+
     push();
     rectMode(CENTER);
-    stroke(255);
+
+    // ダウン中
+    const alpha = isDead ? 80 : 220;
+    
+    // プレイヤー円描画
+    stroke(255, alpha);
     strokeWeight(1);
     fill( p.color.r, p.color.g, p.color.b, 220);
     rect(p.x, p.y, PLAYER_SIZE, PLAYER_SIZE, 3);
 
+    // 名前
     noStroke();
-    fill(240);
+    fill(240, alpha);
     textSize(12);
     textAlign(CENTER, BOTTOM);
-    text(p.name, p.x, p.y - 14);
-    
+    text(p.name, p.x, p.y - 12);
+
+    // HPバー
+    const barW = 35, barH = 5;
+    const hpRatio = Math.max(0, Math.min(1, p.hp/100));
+    // HPバー枠
+    stroke(50, alpha); noFill();
+    rectMode(CORNER);
+    rect(p.x - barW/2, p.y - PLAYER_SIZE/2 - 20, barW, barH);
+    // HPバー中身
+    noStroke();
+    fill(180, 255, 180, alpha);    
+    rect(p.x - barW/2, p.y - PLAYER_SIZE/2 - 20, barW * hpRatio, barH);    
+
+    // エネルギー量
     fill(180, 255, 180);
     textAlign(CENTER, TOP);
     text(`E:${p.energy}`, p.x, p.y + 14);
+
     pop();
   }
 
